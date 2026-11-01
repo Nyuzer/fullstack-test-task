@@ -8,15 +8,17 @@ from app import crud
 from app.api.deps import (
     CurrentUser,
     SessionDep,
-    get_current_active_superuser,
+    require,
 )
 from app.core.config import settings
+from app.core.permissions import Permission, has_permission, permissions_for
 from app.core.security import get_password_hash, verify_password
 from app.models import (
     Item,
     Message,
     UpdatePassword,
     User,
+    UserMe,
     UserCreate,
     UserPublic,
     UserRegister,
@@ -29,9 +31,17 @@ from app.utils import generate_new_account_email, send_email
 router = APIRouter(prefix="/users", tags=["users"])
 
 
+def to_user_me(user: User) -> UserMe:
+    """Serialize the caller together with the capabilities their role grants."""
+    return UserMe.model_validate(
+        user,
+        update={"permissions": sorted(p.value for p in permissions_for(user.role))},
+    )
+
+
 @router.get(
     "/",
-    dependencies=[Depends(get_current_active_superuser)],
+    dependencies=[Depends(require(Permission.USERS_READ))],
     response_model=UsersPublic,
 )
 def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> Any:
@@ -52,7 +62,9 @@ def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> Any:
 
 
 @router.post(
-    "/", dependencies=[Depends(get_current_active_superuser)], response_model=UserPublic
+    "/",
+    dependencies=[Depends(require(Permission.USERS_CREATE))],
+    response_model=UserPublic,
 )
 def create_user(*, session: SessionDep, user_in: UserCreate) -> Any:
     """
@@ -78,7 +90,7 @@ def create_user(*, session: SessionDep, user_in: UserCreate) -> Any:
     return user
 
 
-@router.patch("/me", response_model=UserPublic)
+@router.patch("/me", response_model=UserMe)
 def update_user_me(
     *, session: SessionDep, user_in: UserUpdateMe, current_user: CurrentUser
 ) -> Any:
@@ -97,7 +109,7 @@ def update_user_me(
     session.add(current_user)
     session.commit()
     session.refresh(current_user)
-    return current_user
+    return to_user_me(current_user)
 
 
 @router.patch("/me/password", response_model=Message)
@@ -121,12 +133,12 @@ def update_password_me(
     return Message(message="Password updated successfully")
 
 
-@router.get("/me", response_model=UserPublic)
+@router.get("/me", response_model=UserMe)
 def read_user_me(current_user: CurrentUser) -> Any:
     """
     Get current user.
     """
-    return current_user
+    return to_user_me(current_user)
 
 
 @router.delete("/me", response_model=Message)
@@ -134,7 +146,8 @@ def delete_user_me(session: SessionDep, current_user: CurrentUser) -> Any:
     """
     Delete own user.
     """
-    if current_user.is_superuser:
+    # Whoever is allowed to delete users must not be able to delete themselves.
+    if has_permission(current_user.role, Permission.USERS_DELETE):
         raise HTTPException(
             status_code=403, detail="Super users are not allowed to delete themselves"
         )
@@ -169,7 +182,9 @@ def read_user_by_id(
     user = session.get(User, user_id)
     if user == current_user:
         return user
-    if not current_user.is_superuser:
+    # 403 before 404 on purpose: answering 404 for unknown ids and 403 for known
+    # ones would let a member enumerate which users exist.
+    if not has_permission(current_user.role, Permission.USERS_READ):
         raise HTTPException(
             status_code=403,
             detail="The user doesn't have enough privileges",
@@ -181,7 +196,7 @@ def read_user_by_id(
 
 @router.patch(
     "/{user_id}",
-    dependencies=[Depends(get_current_active_superuser)],
+    dependencies=[Depends(require(Permission.USERS_UPDATE_ANY))],
     response_model=UserPublic,
 )
 def update_user(
@@ -211,7 +226,7 @@ def update_user(
     return db_user
 
 
-@router.delete("/{user_id}", dependencies=[Depends(get_current_active_superuser)])
+@router.delete("/{user_id}", dependencies=[Depends(require(Permission.USERS_DELETE))])
 def delete_user(
     session: SessionDep, current_user: CurrentUser, user_id: uuid.UUID
 ) -> Message:
