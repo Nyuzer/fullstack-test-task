@@ -125,6 +125,12 @@ class ItemsPublic(SQLModel):
     count: int
 
 
+class Metrics(SQLModel):
+    total_users: int
+    active_users: int
+    total_items: int
+
+
 # Generic message
 class Message(SQLModel):
     message: str
