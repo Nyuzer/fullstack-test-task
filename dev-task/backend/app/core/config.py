@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     EMAIL_TEST_USER: EmailStr = "test@example.com"
     FIRST_SUPERUSER: EmailStr
     FIRST_SUPERUSER_PASSWORD: str
+    # Demo accounts for the non-admin roles, seeded in development only.
+    # They reuse FIRST_SUPERUSER_PASSWORD so there is no extra secret to manage.
+    FIRST_MANAGER: EmailStr = "manager@example.com"
+    FIRST_MEMBER: EmailStr = "member@example.com"
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":
