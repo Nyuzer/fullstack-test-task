@@ -1,4 +1,4 @@
-import { Briefcase, Home, Users } from "lucide-react"
+import { BarChart3, Briefcase, Home, Users } from "lucide-react"
 
 import { SidebarAppearance } from "@/components/Common/Appearance"
 import { Logo } from "@/components/Common/Logo"
@@ -8,21 +8,25 @@ import {
   SidebarFooter,
   SidebarHeader,
 } from "@/components/ui/sidebar"
+import type { Permission } from "@/hooks/useAuth"
 import useAuth from "@/hooks/useAuth"
 import { type Item, Main } from "./Main"
 import { User } from "./User"
 
-const baseItems: Item[] = [
+/** `requires` undefined means the entry is visible to every signed-in user. */
+type NavItem = Item & { requires?: Permission }
+
+const navItems: NavItem[] = [
   { icon: Home, title: "Dashboard", path: "/" },
   { icon: Briefcase, title: "Items", path: "/items" },
+  { icon: BarChart3, title: "Metrics", path: "/metrics", requires: "metrics:read" },
+  { icon: Users, title: "Admin", path: "/admin", requires: "users:read" },
 ]
 
 export function AppSidebar() {
-  const { user: currentUser } = useAuth()
+  const { user: currentUser, can } = useAuth()
 
-  const items = currentUser?.is_superuser
-    ? [...baseItems, { icon: Users, title: "Admin", path: "/admin" }]
-    : baseItems
+  const items = navItems.filter((item) => !item.requires || can(item.requires))
 
   return (
     <Sidebar collapsible="icon">
