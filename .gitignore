@@ -1,0 +1,41 @@
+# --- secrets (infra task) ---
+# NOTE: dev-task/.env is intentionally NOT ignored — it ships with the
+# template, contains only "changethis" placeholders, and the documented
+# setup depends on it.
+infra-task/.env
+infra-task/*.auto.tfvars
+infra-task/*.tfvars
+*.pem
+*.key
+id_rsa*
+*-authkey.txt
+hcloud.toml
+
+# --- terraform ---
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- node ---
+node_modules/
+dist/
+.vite/
+playwright-report/
+test-results/
+blob-report/
+
+# --- os / editors ---
+.DS_Store
+Thumbs.db
+*.swp
