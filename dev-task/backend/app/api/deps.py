@@ -22,6 +22,15 @@ reusable_oauth2 = OAuth2PasswordBearer(
 )
 
 
+def _unauthenticated(detail: str) -> HTTPException:
+    """401: we cannot establish who the caller is (missing, invalid or stale token)."""
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
 def get_db() -> Generator[Session]:
     with Session(engine) as session:
         yield session
@@ -38,15 +47,14 @@ def get_current_user(session: SessionDep, token: TokenDep) -> User:
         )
         token_data = TokenPayload(**payload)
     except (InvalidTokenError, ValidationError):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Could not validate credentials",
-        )
+        raise _unauthenticated("Could not validate credentials")
     user = session.get(User, token_data.sub)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        # The token is well-formed but its subject is gone. That is still an
+        # authentication failure, not a missing resource.
+        raise _unauthenticated("Could not validate credentials")
     if not user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
+        raise _unauthenticated("Inactive user")
     return user
 
 
