@@ -20,10 +20,10 @@ client.setConfig({
 })
 
 const handleApiError = (error: Error) => {
-  if (
-    error instanceof AxiosError &&
-    [401, 403].includes(error.response?.status ?? 0)
-  ) {
+  // 401 means we don't know who you are: drop the stale token and re-login.
+  // 403 means you're known but not permitted, so keep the session and let the
+  // route render its Forbidden state instead of logging the user out.
+  if (error instanceof AxiosError && error.response?.status === 401) {
     localStorage.removeItem("access_token")
     window.location.href = "/login"
   }

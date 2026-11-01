@@ -4,7 +4,7 @@ import { useNavigate } from "@tanstack/react-router"
 import {
   type Body_login_login_access_token as AccessToken,
   LoginService,
-  type UserPublic,
+  type UserMe,
   type UserRegister,
   UsersService,
 } from "@/client"
@@ -15,12 +15,30 @@ const isLoggedIn = () => {
   return localStorage.getItem("access_token") !== null
 }
 
+/**
+ * The permission strings the backend sends on `/users/me`. The UI gates on
+ * these rather than on role names, so adding a role needs no frontend change.
+ */
+export type Permission =
+  | "users:read"
+  | "users:create"
+  | "users:update_any"
+  | "users:delete"
+  | "metrics:read"
+  | "settings:manage"
+  | "items:manage_any"
+
+export const userCan = (
+  user: UserMe | null | undefined,
+  permission: Permission,
+) => user?.permissions?.includes(permission) ?? false
+
 const useAuth = () => {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { showErrorToast } = useCustomToast()
 
-  const { data: user } = useQuery<UserPublic | null, Error>({
+  const { data: user } = useQuery<UserMe | null, Error>({
     queryKey: ["currentUser"],
     queryFn: async () => (await UsersService.readUserMe()).data,
     enabled: isLoggedIn(),
@@ -63,6 +81,7 @@ const useAuth = () => {
     loginMutation,
     logout,
     user,
+    can: (permission: Permission) => userCan(user, permission),
   }
 }
 
