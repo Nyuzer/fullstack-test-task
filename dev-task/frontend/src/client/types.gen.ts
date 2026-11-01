@@ -123,6 +123,24 @@ export type Message = {
 };
 
 /**
+ * Metrics
+ */
+export type Metrics = {
+    /**
+     * Total Users
+     */
+    total_users: number;
+    /**
+     * Active Users
+     */
+    active_users: number;
+    /**
+     * Total Items
+     */
+    total_items: number;
+};
+
+/**
  * NewPassword
  */
 export type NewPassword = {
@@ -198,6 +216,7 @@ export type UserCreate = {
      * Is Active
      */
     is_active?: boolean;
+    role?: UserRole;
     /**
      * Is Superuser
      */
@@ -213,6 +232,48 @@ export type UserCreate = {
 };
 
 /**
+ * UserMe
+ *
+ * Response for `/users/me` only.
+ *
+ * Carries the caller's resolved capabilities so the frontend can render from
+ * `permissions` instead of hardcoding role names. Kept separate from
+ * `UserPublic` so the user-list endpoint does not serialize a permission list
+ * for every row.
+ */
+export type UserMe = {
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Is Active
+     */
+    is_active?: boolean;
+    role?: UserRole;
+    /**
+     * Is Superuser
+     */
+    is_superuser?: boolean;
+    /**
+     * Full Name
+     */
+    full_name?: string | null;
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Created At
+     */
+    created_at?: string | null;
+    /**
+     * Permissions
+     */
+    permissions: Array<string>;
+};
+
+/**
  * UserPublic
  */
 export type UserPublic = {
@@ -224,6 +285,7 @@ export type UserPublic = {
      * Is Active
      */
     is_active?: boolean;
+    role?: UserRole;
     /**
      * Is Superuser
      */
@@ -261,6 +323,11 @@ export type UserRegister = {
 };
 
 /**
+ * UserRole
+ */
+export type UserRole = 'admin' | 'manager' | 'member';
+
+/**
  * UserUpdate
  */
 export type UserUpdate = {
@@ -272,10 +339,7 @@ export type UserUpdate = {
      * Is Active
      */
     is_active?: boolean | null;
-    /**
-     * Is Superuser
-     */
-    is_superuser?: boolean | null;
+    role?: UserRole | null;
     /**
      * Full Name
      */
@@ -554,7 +618,7 @@ export type usersReadUserMeResponses = {
     /**
      * Successful Response
      */
-    200: UserPublic;
+    200: UserMe;
 };
 
 export type usersReadUserMeResponse = usersReadUserMeResponses[keyof usersReadUserMeResponses];
@@ -579,7 +643,7 @@ export type usersUpdateUserMeResponses = {
     /**
      * Successful Response
      */
-    200: UserPublic;
+    200: UserMe;
 };
 
 export type usersUpdateUserMeResponse = usersUpdateUserMeResponses[keyof usersUpdateUserMeResponses];
@@ -920,6 +984,22 @@ export type itemsUpdateItemResponses = {
 };
 
 export type itemsUpdateItemResponse = itemsUpdateItemResponses[keyof itemsUpdateItemResponses];
+
+export type metricsReadMetricsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/metrics/';
+};
+
+export type metricsReadMetricsResponses = {
+    /**
+     * Successful Response
+     */
+    200: Metrics;
+};
+
+export type metricsReadMetricsResponse = metricsReadMetricsResponses[keyof metricsReadMetricsResponses];
 
 export type privateCreateUserData = {
     body: PrivateUserCreate;
