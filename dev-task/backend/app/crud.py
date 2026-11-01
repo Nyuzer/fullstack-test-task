@@ -38,7 +38,14 @@ def create_user(*, session: Session, user_create: UserCreate) -> User:
 
 
 def update_user(*, session: Session, db_user: User, user_in: UserUpdate) -> Any:
-    user_data = user_in.model_dump(exclude_unset=True)
+    # Drop explicit nulls: every UserUpdate field is optional-to-omit, not
+    # nullable in the database, so `{"role": null}` means "leave it alone"
+    # rather than "write NULL" (which the NOT NULL column would reject).
+    user_data = {
+        key: value
+        for key, value in user_in.model_dump(exclude_unset=True).items()
+        if value is not None
+    }
     extra_data: dict[str, Any] = {}
     if "password" in user_data:
         password = user_data["password"]

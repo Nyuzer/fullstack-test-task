@@ -34,7 +34,12 @@ ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
 
 
 def permissions_for(role: UserRole) -> frozenset[Permission]:
-    return ROLE_PERMISSIONS[role]
+    """Fail closed: a role the matrix doesn't know grants nothing.
+
+    Reachable if a row carries a role string this build has no member for, e.g.
+    during a rollback. Denying beats raising a KeyError out of a dependency.
+    """
+    return ROLE_PERMISSIONS.get(role, frozenset())
 
 
 def has_permission(role: UserRole, permission: Permission) -> bool:
