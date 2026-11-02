@@ -10,6 +10,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/lib/hetzner.sh"
 . "$HERE/lib/verify.sh"
 
+[ "$#" -le 1 ] || die "$EXIT_USAGE" "too many arguments. Usage: ./deploy.sh [--preflight-only]"
+
 PREFLIGHT_ONLY=false
 case "${1:-}" in
   --preflight-only) PREFLIGHT_ONLY=true ;;
@@ -26,30 +28,30 @@ if [ "$PREFLIGHT_ONLY" = true ]; then
   exit 0
 fi
 
-if hz_server_exists "$GHOST_HOSTNAME"; then
-  die "$EXIT_USAGE" "a server named '${GHOST_HOSTNAME}' already exists. Run ./destroy.sh first, or set GHOST_HOSTNAME to something else."
-fi
-
 log "phase 2/4: provision"
 mkdir -p "$HERE/.run"
-ROOT_PASSWORD=$(generate_root_password)
-printf '%s\n' "$ROOT_PASSWORD" > "$HERE/.run/root-password"
-chmod 600 "$HERE/.run/root-password"
-
 TS_AUTHKEY=$(ts_mint_authkey)
 hz_firewall_ensure "$FIREWALL_NAME"
 render_cloud_init "$HERE/cloud-init/ghost.yaml.tmpl" "$HERE/.run/cloud-init.yaml"
 hz_server_create "$GHOST_HOSTNAME" "$SERVER_TYPE" "$SERVER_IMAGE" \
   "$SERVER_LOCATION" "$FIREWALL_NAME" "$HERE/.run/cloud-init.yaml"
 
-log "phase 3/4: waiting for the tailnet node (up to 5 minutes)"
-FQDN=$(wait_for_node "$GHOST_HOSTNAME" 60 5)
+# From here on a billable server exists. Any non-zero exit — including Ctrl-C
+# during the multi-minute waits below — must say so, or it is silently orphaned.
+trap 'ec=$?; if [ "$ec" -ne 0 ]; then
+        printf "\n  A billable server named %s now exists.\n  Run ./destroy.sh to remove it.\n\n" "$GHOST_HOSTNAME" >&2
+      fi; exit "$ec"' EXIT INT TERM
 
-log "phase 4/4: waiting for the public URL (up to 8 minutes)"
-if ! wait_for_funnel "$FQDN" 96 5; then
-  report_boot_phase "$GHOST_HOSTNAME"
+log "phase 3/4: waiting for the tailnet node"
+FQDN=$(wait_for_node "$GHOST_HOSTNAME" 300 5)
+
+log "phase 4/4: waiting for the public URL"
+if ! wait_for_funnel "$FQDN" 600 10; then
+  report_boot_phase "$FQDN"
   exit "$EXIT_NO_FUNNEL"
 fi
+
+trap - EXIT INT TERM
 
 cat <<SUMMARY
 
@@ -57,9 +59,9 @@ cat <<SUMMARY
 
   Blog          https://${FQDN}/
   Admin setup   https://${FQDN}/ghost/
-  Shell         ssh root@${GHOST_HOSTNAME}        (over Tailscale SSH)
-  Boot log      ssh root@${GHOST_HOSTNAME} 'cat /var/log/ghost-deploy/status'
-  Break-glass   infra-task/.run/root-password     (Hetzner VNC console only)
+  Shell         ssh root@${FQDN}                 (over Tailscale SSH)
+  Boot log      ssh root@${FQDN} 'cat /var/log/ghost-deploy/status'
+  Break-glass   ./console.sh                     (out-of-band VNC, no SSH needed)
   Teardown      ./destroy.sh
 
   The VPS firewall has no inbound rules. Tailscale Funnel is the only ingress.
