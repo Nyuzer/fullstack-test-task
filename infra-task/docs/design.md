@@ -31,8 +31,8 @@ deploy.sh
 On the VPS, cloud-init runs in a deliberate order:
 
 ```
-set break-glass root password, harden sshd
-  -> install tailscale, `tailscale up --ssh --advertise-tags=tag:ghost`   (admin access first)
+install tailscale, `tailscale up --ssh --advertise-tags=tag:ghost`      (admin access first)
+  -> harden sshd via a 00- drop-in
   -> derive the .ts.net name from `tailscale status --json`
   -> install docker
   -> write /opt/ghost/compose.yml, `docker compose up -d`                  (Ghost on 127.0.0.1:2368)
@@ -40,7 +40,7 @@ set break-glass root password, harden sshd
 ```
 
 Admin access is established in the *first* step so that every later failure is
-recoverable with `ssh root@ghost` instead of being terminal.
+recoverable over Tailscale SSH instead of being terminal.
 
 ## Key decisions
 
@@ -86,18 +86,26 @@ Each wait is bounded and exits with a distinct code plus a remediation message.
 | 2 | Missing local tool or env var, or bad argument | message names the tool/var |
 | 3 | Tailnet or credential prerequisite unmet | message names the console page and the policy snippet |
 | 4 | Node never registered in the tailnet | box is unreachable; `./console.sh` to read cloud-init logs, or destroy and redeploy |
-| 5 | Funnel URL never returned 200 | node is reachable; script prints the boot phase read over Tailscale SSH |
+| 5 | Funnel URL never returned 200 | node is reachable; script prints the boot phases read over Tailscale SSH |
+
+Both waits use wall-clock deadlines, and every outbound `curl` has a connect and
+total timeout, so an unresponsive API cannot hang a deploy with a billable server
+running.
 
 cloud-init appends to `/var/log/ghost-deploy/status` after each phase, so once the
 node registers the script can report exactly how far boot got.
 
 For the unreachable cases the break-glass path is the Hetzner VNC console
-(`POST /servers/{id}/actions/request_console`, which the `hcloud` CLI does not
-expose, so `console.sh` calls the API directly). It is out-of-band and needs no
-SSH and no firewall change — hence the generated root password. Hetzner rescue
-mode is *not* a clean fallback, because rescue mode is reached over SSH to the
-public IP, which this firewall blocks; that caveat is documented rather than
-papered over.
+(`hcloud server request-console`, wrapped by `console.sh`). It is out-of-band and
+needs no SSH and no firewall change. No root password is baked into the image:
+Hetzner serves user-data to anything in the instance network namespace, including
+the Ghost container, so a long-lived password there would be a container-escape
+path to root. `console.sh` directs the operator to `hcloud server reset-password`
+instead, which mints one on demand.
+
+Hetzner rescue mode is *not* a clean fallback, because rescue mode is reached
+over SSH to the public IP, which this firewall blocks; that caveat is documented
+rather than papered over.
 
 ## File structure
 
@@ -109,8 +117,8 @@ papered over.
 | `infra-task/lib/common.sh` | logging, `die`, `require_cmd`, env loading, exit codes |
 | `infra-task/lib/tailscale.sh` | Tailscale API: mint key, find device, delete device |
 | `infra-task/lib/preflight.sh` | all verify-and-instruct checks |
-| `infra-task/lib/render.sh` | cloud-init templating, break-glass password generation |
-| `infra-task/lib/hetzner.sh` | `hcloud` wrappers: firewall, server, console id |
+| `infra-task/lib/render.sh` | cloud-init templating |
+| `infra-task/lib/hetzner.sh` | `hcloud` wrappers: firewall, server, id, ip |
 | `infra-task/lib/verify.sh` | bounded waits and probes |
 | `infra-task/cloud-init/ghost.yaml.tmpl` | user-data template |
 | `infra-task/README.md` | one-time tailnet setup, usage, exit codes, troubleshooting |

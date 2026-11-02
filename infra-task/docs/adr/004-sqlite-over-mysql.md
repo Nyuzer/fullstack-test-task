@@ -38,5 +38,6 @@ Ghost release refuses to start on SQLite in production mode, the deploy fails
 loudly at a named phase rather than serving a broken site.
 
 Moving to MySQL later is a contained change: add a `mysql:8` service to
-`compose.yml`, generate a password alongside the root password in `deploy.sh`,
-and swap the four `database__*` environment variables. No other file changes.
+`compose.yml`, generate a database password in `deploy.sh`, pass it through the
+cloud-init template, and swap the four `database__*` environment variables. No
+other file changes.

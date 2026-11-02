@@ -22,7 +22,7 @@
 - [ ] **Step 2:** Verify the toolchain: `for c in bash curl ssh jq hcloud; do printf '%-8s %s\n' "$c" "$(command -v $c || echo MISSING)"; done` — expect five paths, no `MISSING`.
 - [ ] **Step 3:** Write `lib/common.sh`: exit-code constants, `log`/`warn`/`die`, `require_cmd`, `require_env`, `load_env` with defaults.
 - [ ] **Step 4:** Write `.env.example` with `HCLOUD_TOKEN`, `TS_API_KEY`, `TS_TAILNET`, and the optional overrides commented out.
-- [ ] **Step 5:** Write `.gitignore` ignoring `.run/` (holds the rendered cloud-init, which contains the auth key and break-glass password).
+- [ ] **Step 5:** Write `.gitignore` ignoring `.run/` (holds the rendered cloud-init, which contains the single-use auth key).
 - [ ] **Step 6: Verify** defaults apply and `require_env` exits 2:
   ```bash
   cd infra-task && bash -c '. lib/common.sh; load_env .env.example; echo "type=$SERVER_TYPE tag=$TS_TAG fw=$FIREWALL_NAME"'
@@ -38,9 +38,9 @@
 
 **Files:** create `infra-task/lib/tailscale.sh`
 
-- [ ] **Step 1:** Write `ts_api` (curl wrapper; `Accept: application/json` matters — the policy endpoint otherwise returns HuJSON with comments, which `jq` cannot parse).
-- [ ] **Step 2:** Write `ts_mint_authkey` — single-use, ephemeral, pre-approved, tagged; dies with exit 3 naming `tagOwners` if the API returns no key.
-- [ ] **Step 3:** Write `ts_device_fqdn` (reads `.devices[].name`, strips the trailing dot) and `ts_delete_device_by_hostname`.
+- [ ] **Step 1:** Write `ts_api` (curl wrapper; `Accept: application/json` matters — the policy endpoint otherwise returns HuJSON with comments, which `jq` cannot parse). Feed the token via `curl --config -` on stdin, not argv, and set `--connect-timeout`/`--max-time`: these calls sit inside loops that advertise a deadline.
+- [ ] **Step 2:** Write `ts_mint_authkey` — single-use, **not** ephemeral, pre-approved, tagged; dies with exit 3 naming `tagOwners` if the API returns no key. Ephemeral would deregister the server on any disconnect and change its Funnel FQDN.
+- [ ] **Step 3:** Write `ts_device_count`, `ts_device_fqdn` (reads `.devices[].name`, strips the trailing dot, and dies rather than guessing if two devices share the hostname) and `ts_delete_device_by_hostname`.
 - [ ] **Step 4: Verify** against the real API — this also confirms `TS_API_KEY` works:
   ```bash
   cd infra-task && bash -c '. lib/common.sh; . lib/tailscale.sh; load_env .env; ts_api GET "/tailnet/$TS_TAILNET/devices" | jq -r ".devices[].hostname"'
@@ -55,7 +55,7 @@
 **Files:** create `infra-task/lib/preflight.sh`
 
 - [ ] **Step 1:** Write the pure predicates `policy_has_tag_owner`, `policy_has_funnel_attr`, `policy_has_ssh_rule` (jq over the policy JSON, return 0/1, print nothing).
-- [ ] **Step 2:** Write `check_local_tools`, `check_config`, `check_hcloud_token`, `check_magicdns`.
+- [ ] **Step 2:** Write `check_local_tools`, `check_config`, `check_hcloud_token`, `check_magicdns`, `check_hostname_free` (no existing Hetzner server *and* no existing tailnet device with that hostname).
 - [ ] **Step 3:** Write `check_tailnet_policy` — on each failure print the literal JSON snippet to paste plus `console.tailscale.com/admin/acls`, then exit 3. Never writes the policy.
 - [ ] **Step 4:** Write `warn_https_certs_unverifiable` (HTTPS cert status is not exposed by the API, so it is a logged reminder, not a gate) and `run_preflight`.
 - [ ] **Step 5: Verify** the predicates reject a member-only policy, which is the realistic failure since `autogroup:member` does not cover tagged devices:
@@ -75,18 +75,20 @@
 **Files:** create `infra-task/cloud-init/ghost.yaml.tmpl`, `infra-task/lib/render.sh`
 
 - [ ] **Step 1:** Write the template: `write_files` for `/opt/ghost/compose.yml` (Ghost 5 on SQLite, bound to `127.0.0.1:2368`) and `/usr/local/bin/ghost-bootstrap.sh`, plus a `runcmd` that invokes the bootstrap.
-- [ ] **Step 2:** The bootstrap script writes a phase marker to `/var/log/ghost-deploy/status` before each phase, in this order: `hardening`, `tailscale-install`, `tailscale-up`, `resolve-url`, `docker-install`, `ghost-up`, `ghost-healthy`, `funnel`, `done`. Tailscale comes up before Docker exists, so any later failure leaves a debuggable box.
-- [ ] **Step 3:** Write `lib/render.sh` — `generate_root_password` (hex only, so it can never collide with sed's delimiter or YAML quoting) and `render_cloud_init` (mode 600, dies with exit 2 if any `__TOKEN__` survives).
+- [ ] **Step 2:** The bootstrap script writes a phase marker to `/var/log/ghost-deploy/status` before each phase, in this order: `tailscale-install`, `tailscale-up`, `hardening`, `resolve-url`, `docker-install`, `docker-ready`, `ghost-up`, `ghost-healthy`, `funnel`, `cleanup`, `done`. Tailscale comes up first, before sshd hardening and before Docker exists, so any later failure leaves a debuggable box. An `ERR` trap records an `UNEXPECTED-FAILURE` marker for anything not routed through `fail`.
+- [ ] **Step 3:** Write `lib/render.sh` — `render_cloud_init` only (mode 600, dies with exit 2 if any `__TOKEN__` survives). No root password is generated: user-data is readable from inside the instance, including from the Ghost container.
 - [ ] **Step 4: Verify** rendering substitutes everything, the output is 600, and it is valid YAML:
   ```bash
   cd infra-task && mkdir -p .run && bash -c '
     . lib/common.sh; . lib/render.sh
-    ROOT_PASSWORD=deadbeef TS_AUTHKEY=tskey-auth-xyz GHOST_HOSTNAME=ghost TS_TAG=tag:ghost
+    TS_AUTHKEY=tskey-auth-xyz GHOST_HOSTNAME=ghost TS_TAG=tag:ghost
     render_cloud_init cloud-init/ghost.yaml.tmpl .run/preview.yaml'
-  grep -c '__[A-Z_]*__' .run/preview.yaml; stat -c '%a' .run/preview.yaml
+  grep -c '__[A-Z_]*__' .run/preview.yaml
+  grep -ci 'chpasswd' .run/preview.yaml
   python -c "import yaml; yaml.safe_load(open('.run/preview.yaml')); print('valid yaml')"
   ```
-  Expect `0`, `600`, `valid yaml`.
+  Expect `0`, `0`, `valid yaml`. (`stat -c '%a'` reports 644 on Git Bash/NTFS even
+  though `chmod 600` ran — that filesystem only maps the read-only flag.)
 - [ ] **Step 5: Verify** the rendered bootstrap is itself valid bash: extract it and run `bash -n`.
 - [ ] **Step 6: Commit** `feat(infra): add cloud-init template with tunnel-first bootstrap`
 
@@ -130,8 +132,8 @@
 **Files:** create `infra-task/deploy.sh`
 
 - [ ] **Step 1:** Source the libs, parse `--preflight-only`, `load_env`, and refuse to proceed if a server with that name already exists.
-- [ ] **Step 2:** Run the four phases; write the break-glass password to `.run/root-password` (mode 600); on a Funnel timeout call `report_boot_phase` before exiting 5.
-- [ ] **Step 3:** Print a summary: blog URL, admin URL, SSH command, boot-log command, break-glass file, teardown command.
+- [ ] **Step 2:** Run the four phases; install an `EXIT`/`INT`/`TERM` trap after `hz_server_create` so an interrupt during the multi-minute waits cannot silently orphan a billable server; on a Funnel timeout call `report_boot_phase` before exiting 5. `wait_for_funnel` must `return`, not `die`, or the report is unreachable.
+- [ ] **Step 3:** Print a summary: blog URL, admin URL, SSH command, boot-log command, break-glass command, teardown command.
 - [ ] **Step 4: Verify** syntax and argument rejection:
   ```bash
   cd infra-task && chmod +x deploy.sh && bash -n deploy.sh && echo "syntax ok"
@@ -152,8 +154,8 @@
 
 **Files:** create `infra-task/destroy.sh`, `infra-task/console.sh`
 
-- [ ] **Step 1:** `destroy.sh` deletes the server, the firewall, and the tailnet device record, then removes `.run/`. Each delete is a no-op when the resource is absent.
-- [ ] **Step 2:** `console.sh` calls `POST /servers/{id}/actions/request_console` directly, because the `hcloud` CLI has no `request-console` subcommand. It prints the console URL, the console password, and the break-glass root password, plus the note that rescue mode is not a usable fallback here.
+- [ ] **Step 1:** `destroy.sh` calls `require_env` up front (otherwise `set -u` aborts it part-way through), deletes the server, the firewall, and the tailnet device record, then removes `.run/`. Each delete is a no-op when absent, and a failing tailnet delete warns rather than stranding the local cleanup.
+- [ ] **Step 2:** `console.sh` wraps `hcloud server request-console`, then explains how to open the console in the Hetzner web UI (the returned `wss://` URL is not browser-openable) and how to mint a root password with `hcloud server reset-password`. It notes that rescue mode is not a usable fallback here.
 - [ ] **Step 3: Verify** syntax and that teardown is idempotent on an empty project:
   ```bash
   cd infra-task && chmod +x destroy.sh console.sh && bash -n destroy.sh && bash -n console.sh && echo "syntax ok"
@@ -173,6 +175,7 @@
 - [ ] **Step 3:** ADR-003 — verify tailnet policy, never patch it.
 - [ ] **Step 4:** ADR-004 — SQLite as a demo scope cut.
 - [ ] **Step 5:** ADR-005 — no automated test suite; what is verified instead and what that costs.
+- [ ] **Step 5b:** ADR-006 — what the pre-deployment review changed and why.
 - [ ] **Step 6:** README — how it works, one-time tailnet setup with the exact policy JSON, requirements, deploy, operate, exit-code table, troubleshooting per exit code, scope cuts, ADR links.
 - [ ] **Step 7: Verify** every internal link resolves:
   ```bash

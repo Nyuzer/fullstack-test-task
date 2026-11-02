@@ -19,8 +19,8 @@ later failure leaves a debuggable box rather than a brick (see
 [ADR-002](docs/adr/002-tunnel-first-bootstrap.md)):
 
 ```
-harden sshd, set break-glass root password
-  -> tailscale up --ssh --advertise-tags=tag:ghost
+tailscale up --ssh --advertise-tags=tag:ghost      <- admin access first
+  -> harden sshd (non-fatal; the firewall is the real control)
   -> resolve the .ts.net name from `tailscale status --json`
   -> install docker
   -> docker compose up -d        (Ghost on 127.0.0.1:2368, SQLite)
@@ -87,21 +87,28 @@ ssh root@ghost 'tailscale funnel status'              # ingress state
 ./destroy.sh                                          # remove everything
 ```
 
+The bare `ghost` hostname works only if your own machine is in the tailnet with
+MagicDNS; the full `ghost.<tailnet>.ts.net` name that `deploy.sh` prints always
+works. Readers of the blog need neither — that is what Funnel is for.
+
 ## Exit codes
 
 | Code | Meaning | What to do |
 |------|---------|-----------|
 | 2 | Missing tool, missing env var, or bad argument | the message names what is missing |
-| 3 | Credential or tailnet prerequisite unmet | paste the printed snippet, re-run |
-| 4 | Server created but never joined the tailnet | `./console.sh` to read cloud-init logs, or `./destroy.sh && ./deploy.sh` |
-| 5 | Node joined but the public URL never served 200 | the printed boot phases name the failed phase; `ssh root@ghost` still works |
+| 3 | Credential or tailnet prerequisite unmet | paste the printed policy snippet, re-run |
+| 3 | The name is already taken by a Hetzner server or a tailnet device | `./destroy.sh`, or set `GHOST_HOSTNAME` to something else |
+| 4 | Server created but never joined the tailnet | `./console.sh`, then `hcloud server reset-password ghost` to log in; or `./destroy.sh && ./deploy.sh` |
+| 5 | Node joined but the public URL never served 200 | the printed boot phases name the failed phase; the box is still reachable over Tailscale SSH |
 
 ## Troubleshooting
 
 **Exit 4.** cloud-init failed before Tailscale came up, so there is no network
-path in. Use `./console.sh` for out-of-band access and read
-`/var/log/cloud-init-output.log`. Hetzner rescue mode is not a usable fallback
-here: it is reached over SSH to the public IP, which this firewall blocks.
+path in. Run `./console.sh`: it requests a console and tells you how to open it
+in the Hetzner web UI and how to mint a root password with
+`hcloud server reset-password`. Then read `/var/log/cloud-init-output.log`.
+Hetzner rescue mode is not a usable fallback here: it is reached over SSH to the
+public IP, which this firewall blocks.
 
 **Exit 5, phase `funnel FAILED`.** Almost always a missing `funnel` node
 attribute for `tag:ghost`, or HTTPS certificates not enabled. Fix the policy,
@@ -121,16 +128,18 @@ Deliberate, with reasoning in the ADRs:
   ([ADR-004](docs/adr/004-sqlite-over-mysql.md)). Do not put real traffic on it.
 - **No automated tests** — each step was verified by hand instead
   ([ADR-005](docs/adr/005-no-automated-tests.md)). Cost: the preflight policy
-  predicates have no regression guard.
+  predicates have no regression guard — and the pre-deployment review found three
+  real bugs in exactly those predicates
+  ([ADR-006](docs/adr/006-pre-deployment-review.md)).
 
 Also not included: backups, Ghost mail configuration, a custom domain, monitoring.
 
 ## Note for Windows
 
 `lib/render.sh` chmods the rendered cloud-init to 600 because it contains the
-auth key and the break-glass password. Git Bash on NTFS only maps the read-only
-flag, so `stat` reports 644 there; the mode applies correctly when deploying from
-Linux or macOS. The file lives in `.run/`, which is gitignored.
+single-use auth key. Git Bash on NTFS only maps the read-only flag, so `stat`
+reports 644 there; the mode applies correctly when deploying from Linux or macOS.
+The file lives in `.run/`, which is gitignored.
 
 ## Design decisions
 
@@ -139,5 +148,6 @@ Linux or macOS. The file lives in `.run/`, which is gitignored.
 - [ADR-003](docs/adr/003-verify-not-patch-policy.md) — verify tailnet policy, never patch it
 - [ADR-004](docs/adr/004-sqlite-over-mysql.md) — SQLite as a demo scope cut
 - [ADR-005](docs/adr/005-no-automated-tests.md) — no automated test suite
+- [ADR-006](docs/adr/006-pre-deployment-review.md) — what the pre-deployment review changed
 
 Full design: [docs/design.md](docs/design.md). Build plan: [docs/plan.md](docs/plan.md).
