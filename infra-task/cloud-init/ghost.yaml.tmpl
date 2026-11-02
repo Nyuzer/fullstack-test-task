@@ -112,7 +112,16 @@ write_files:
 
       phase funnel
       # Funnel listens publicly on 443 and proxies to Ghost on 2368.
-      tailscale funnel --bg 2368 || fail funnel
+      #
+      # `timeout` and `</dev/null` are both load-bearing. When Funnel is not
+      # enabled tailnet-wide, or HTTPS certificates are off, this command prints
+      # a consent URL and then waits indefinitely for someone to click it — with
+      # no TTY it never returns, and the bootstrap hangs at this phase forever
+      # instead of failing. Capturing its output into the status file puts that
+      # consent URL in front of the operator, since deploy.sh prints this file.
+      if ! timeout 90 tailscale funnel --bg 2368 </dev/null >>"$STATUS" 2>&1; then
+        fail funnel
+      fi
 
       phase cleanup
       # The auth key is spent, but there is no reason to leave it on disk. The
