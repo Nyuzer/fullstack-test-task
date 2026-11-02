@@ -1,0 +1,90 @@
+#cloud-config
+package_update: true
+packages:
+  - curl
+  - ca-certificates
+  - jq
+
+write_files:
+  - path: /opt/ghost/compose.yml
+    permissions: '0644'
+    content: |
+      services:
+        ghost:
+          image: ghost:5-alpine
+          restart: unless-stopped
+          ports:
+            # Loopback only. Tailscale Funnel is the sole ingress.
+            - "127.0.0.1:2368:2368"
+          environment:
+            url: ${GHOST_URL}
+            NODE_ENV: production
+            database__client: sqlite3
+            database__connection__filename: /var/lib/ghost/content/data/ghost.db
+          volumes:
+            - ghost-content:/var/lib/ghost/content
+      volumes:
+        ghost-content:
+
+  - path: /usr/local/bin/ghost-bootstrap.sh
+    permissions: '0700'
+    content: |
+      #!/usr/bin/env bash
+      # Order matters: Tailscale SSH comes up before anything else, so a failure
+      # in a later phase leaves a debuggable box instead of a brick (ADR-002).
+      set -euo pipefail
+
+      STATUS=/var/log/ghost-deploy/status
+      mkdir -p "$(dirname "$STATUS")"
+      phase() { printf '%s phase=%s\n' "$(date -Is)" "$1" >> "$STATUS"; }
+      fail()  { printf '%s phase=%s FAILED\n' "$(date -Is)" "$1" >> "$STATUS"; exit 1; }
+
+      phase hardening
+      # The root password exists only for the out-of-band Hetzner VNC console,
+      # which goes through getty, not sshd. SSH password auth and root SSH login
+      # stay disabled, so the password is useless to a remote attacker.
+      printf 'root:__ROOT_PASSWORD__\n' | chpasswd
+      sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+      sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+      systemctl restart ssh 2>/dev/null || systemctl restart sshd
+
+      phase tailscale-install
+      curl -fsSL https://tailscale.com/install.sh | sh || fail tailscale-install
+
+      phase tailscale-up
+      tailscale up \
+        --auth-key="__TS_AUTHKEY__" \
+        --hostname="__GHOST_HOSTNAME__" \
+        --advertise-tags=__TS_TAG__ \
+        --ssh || fail tailscale-up
+
+      phase resolve-url
+      # Ghost needs its url at boot, but the Funnel FQDN does not exist until the
+      # node registers. Read it from the node itself rather than guessing.
+      FQDN=$(tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//')
+      [ -n "$FQDN" ] || fail resolve-url
+      printf 'GHOST_URL=https://%s\n' "$FQDN" > /opt/ghost/.env
+
+      phase docker-install
+      curl -fsSL https://get.docker.com | sh || fail docker-install
+
+      phase ghost-up
+      docker compose --env-file /opt/ghost/.env -f /opt/ghost/compose.yml up -d || fail ghost-up
+
+      phase ghost-healthy
+      # Also catches a future Ghost release refusing to start on SQLite in
+      # production mode (ADR-004): it fails loudly at a named phase.
+      for i in $(seq 1 60); do
+        if curl -fsS -o /dev/null http://127.0.0.1:2368/; then break; fi
+        [ "$i" -eq 60 ] && fail ghost-healthy
+        sleep 5
+      done
+
+      phase funnel
+      # Funnel listens publicly on 443 and proxies to Ghost on 2368.
+      tailscale funnel --bg 2368 || fail funnel
+
+      phase done
+
+runcmd:
+  - [ bash, -lc, "/usr/local/bin/ghost-bootstrap.sh" ]
