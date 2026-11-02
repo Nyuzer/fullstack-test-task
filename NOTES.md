@@ -129,3 +129,46 @@ unmounted outside development; `404` rather than `403` for items the caller does
 not own, matching the non-enumerable ordering already used for users; and
 persisted audit records for denied attempts, which currently only reach the log
 at WARNING.
+
+---
+
+# infra-task: Ghost on Hetzner via Tailscale Funnel
+
+Full write-up, with evidence and known gaps:
+[`infra-task/docs/outcome.md`](infra-task/docs/outcome.md).
+
+## Time spent
+
+~1.5 hours. Stopped on hitting Claude Code usage limits and the time budget, not
+at a natural finishing point.
+
+## Status: incomplete
+
+`./deploy.sh` provisions a Hetzner VPS running Ghost with no public SSH, and
+everything up to a healthy Ghost is proven against a live deploy (79 seconds from
+boot to Ghost responding). The **public URL never served traffic**: Tailscale
+Funnel and HTTPS certificates are not enabled on the tailnet used for testing,
+which the Tailscale API does not expose, so preflight could not gate on it.
+
+Verified on a real deploy: zero-inbound-rule firewall attached before first boot,
+no SSH key injected, node joins the tailnet by dialling out, Tailscale SSH works
+for administration, Ghost boots on SQLite in production mode (previously an open
+question in ADR-004), and preflight refuses to spend money when prerequisites are
+missing.
+
+Not proven: the public Funnel URL, the unreachability of port 22 on the public IP
+(specified but never executed), and `destroy.sh` against a live server.
+
+## What cost the time
+
+Roughly a third went into a pre-deployment review that found ten real defects in
+the failure handling — including an exit-5 diagnostic that was dead code, and
+sshd hardening running before Tailscale came up where a bad config could have
+bricked the box. Both are recorded in
+[`ADR-006`](infra-task/docs/adr/006-pre-deployment-review.md). The review paid for
+itself immediately: the boot-phase report it restored is the only reason the
+Funnel failure was diagnosed in minutes instead of guessed at.
+
+Two wrong assumptions of mine also cost time, both now corrected in the docs: the
+default server type `cx22` no longer exists (it is `cx23`), and I claimed
+`hcloud server request-console` did not exist after reading a truncated `--help`.

@@ -4,6 +4,11 @@ One command provisions a Hetzner VPS running Ghost, publicly reachable over
 HTTPS. The VPS firewall has **no inbound rules at all**. Tailscale Funnel is the
 only ingress; administration is over Tailscale SSH.
 
+> **Status: incomplete.** A live deploy reaches a healthy Ghost in 79 seconds,
+> but the public Funnel URL has never served a request — Funnel and HTTPS
+> certificates were not enabled on the test tailnet. What was verified, what was
+> not, and how to finish it: [docs/outcome.md](docs/outcome.md).
+
 ## How it works
 
 ```
