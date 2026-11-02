@@ -15,20 +15,26 @@ policy_has_tag_owner() {
   printf '%s' "$1" | jq -e --arg t "$TS_TAG" '(.tagOwners // {}) | has($t)' >/dev/null 2>&1
 }
 
+# "*" is a valid wildcard in target/dst/users and must count as a match, or a
+# correct policy gets rejected with a confusing instruction to add what it has.
 policy_has_funnel_attr() {
   printf '%s' "$1" | jq -e --arg t "$TS_TAG" '
     [.nodeAttrs[]?
-      | select((.target // []) | index($t))
+      | select(((.target // []) | index($t)) or ((.target // []) | index("*")))
       | select((.attr // []) | index("funnel"))
     ] | length > 0' >/dev/null 2>&1
 }
 
+# Also checks src: a rule granting root on the tag to some unrelated source
+# (say tag:ci) satisfies the letter of the check while granting the operator
+# nothing, which would pass preflight and then fail at the exit-5 diagnostic.
 policy_has_ssh_rule() {
   printf '%s' "$1" | jq -e --arg t "$TS_TAG" '
     [.ssh[]?
       | select(.action == "accept")
-      | select((.dst // []) | index($t))
-      | select((.users // []) | index("root"))
+      | select(((.dst // []) | index($t)) or ((.dst // []) | index("*")))
+      | select(((.users // []) | index("root")) or ((.users // []) | index("*")))
+      | select((.src // []) | any(. == "*" or . == "autogroup:member" or . == "autogroup:admin"))
     ] | length > 0' >/dev/null 2>&1
 }
 
@@ -91,6 +97,20 @@ check_tailnet_policy() {
   log "tailnet prerequisites OK (tagOwners, funnel attr, ssh rule)"
 }
 
+# Both namespaces must be free before anything is created. A leftover tailnet
+# device named ${GHOST_HOSTNAME} is the dangerous one: MagicDNS would name the
+# new node ghost-1, while the deploy script would resolve and probe the old
+# ghost — reporting a URL that is not the server it just built.
+check_hostname_free() {
+  hz_server_exists "$GHOST_HOSTNAME" &&
+    die "$EXIT_PREREQ" "a Hetzner server named '${GHOST_HOSTNAME}' already exists. Run ./destroy.sh first, or set GHOST_HOSTNAME to something else."
+
+  local count
+  count=$(ts_device_count "$GHOST_HOSTNAME")
+  [ "$count" = "0" ] ||
+    die "$EXIT_PREREQ" "${count} tailnet device(s) are already named '${GHOST_HOSTNAME}'. Remove them at https://console.tailscale.com/admin/machines (or run ./destroy.sh), or set GHOST_HOSTNAME to something else."
+}
+
 # HTTPS certificate status is not exposed by the Tailscale API, so this is a
 # logged reminder rather than a gate. A missing certificate surfaces as a failed
 # "funnel" phase, which the post-deploy report reads off the node.
@@ -104,5 +124,7 @@ run_preflight() {
   check_hcloud_token
   check_magicdns
   check_tailnet_policy
+  check_hostname_free
   warn_https_certs_unverifiable
+  log "note: administering the server needs your own machine in the tailnet; the public blog does not"
 }
