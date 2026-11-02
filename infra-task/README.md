@@ -4,10 +4,11 @@ One command provisions a Hetzner VPS running Ghost, publicly reachable over
 HTTPS. The VPS firewall has **no inbound rules at all**. Tailscale Funnel is the
 only ingress; administration is over Tailscale SSH.
 
-> **Status: incomplete.** A live deploy reaches a healthy Ghost in 79 seconds,
-> but the public Funnel URL has never served a request — Funnel and HTTPS
-> certificates were not enabled on the test tailnet. What was verified, what was
-> not, and how to finish it: [docs/outcome.md](docs/outcome.md).
+> **Status: working.** A full `./deploy.sh` run reaches a live blog on
+> `https://ghost.<tailnet>.ts.net/`, with zero inbound firewall rules. Not every
+> scenario was tested — notably public reachability was measured from inside the
+> tailnet, and port 22 on the public IP was never probed. What was verified and
+> what was not: [docs/outcome.md](docs/outcome.md).
 
 ## How it works
 

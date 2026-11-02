@@ -142,22 +142,29 @@ Full write-up, with evidence and known gaps:
 ~1.5 hours. Stopped on hitting Claude Code usage limits and the time budget, not
 at a natural finishing point.
 
-## Status: incomplete
+## Status: working, with partial test coverage
 
-`./deploy.sh` provisions a Hetzner VPS running Ghost with no public SSH, and
-everything up to a healthy Ghost is proven against a live deploy (79 seconds from
-boot to Ghost responding). The **public URL never served traffic**: Tailscale
-Funnel and HTTPS certificates are not enabled on the tailnet used for testing,
-which the Tailscale API does not expose, so preflight could not gate on it.
+`./deploy.sh` provisions a Hetzner VPS running Ghost published over HTTPS through
+Tailscale Funnel, with **zero inbound firewall rules** and administration only
+over Tailscale SSH. A full run completed successfully: one command, no
+interaction, no SSH key anywhere in the flow, ending at a live blog on
+`https://ghost.<tailnet>.ts.net/`. Boot to a healthy Ghost measured 79 seconds.
 
-Verified on a real deploy: zero-inbound-rule firewall attached before first boot,
-no SSH key injected, node joins the tailnet by dialling out, Tailscale SSH works
-for administration, Ghost boots on SQLite in production mode (previously an open
-question in ADR-004), and preflight refuses to spend money when prerequisites are
-missing.
+Verified: zero-rule firewall attached before first boot, no SSH key injected, the
+node joins by dialling out, Tailscale SSH works for administration, Ghost boots on
+SQLite in production mode (previously an open question in ADR-004), the public
+hostname resolves to Tailscale edge addresses rather than to the VPS, and
+preflight refuses to spend money when prerequisites are missing — which it did
+twice, on a missing `tagOwners` entry and on a retired server type.
 
-Not proven: the public Funnel URL, the unreachability of port 22 on the public IP
-(specified but never executed), and `destroy.sh` against a live server.
+**Not every scenario was tested, and the gaps are material.** The HTTP 200 in
+phase 4 was measured from a machine inside the tailnet with MagicDNS active, so it
+proves the TLS cert and the proxy to Ghost but not that a client without Tailscale
+can reach the blog. Port 22 on the public IP — the headline security claim — was
+never probed; it rests on the firewall having no rules, which is verified.
+`destroy.sh` has never run against a live server, `console.sh` was never
+exercised, and Ghost itself was never used beyond returning 200. The full list is
+in [`docs/outcome.md`](infra-task/docs/outcome.md#what-was-not-tested).
 
 ## What cost the time
 
