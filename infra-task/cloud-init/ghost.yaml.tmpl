@@ -26,30 +26,38 @@ write_files:
       volumes:
         ghost-content:
 
+  # Read first by sshd via `Include /etc/ssh/sshd_config.d/*.conf`, which sits at
+  # the top of sshd_config. sshd takes the FIRST value it sees for a keyword, and
+  # drop-ins are read in glob order, so the 00- prefix is what makes this win
+  # over a 50-cloud-init.conf that might re-enable password auth.
+  - path: /etc/ssh/sshd_config.d/00-no-public-ssh.conf
+    permissions: '0644'
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+
   - path: /usr/local/bin/ghost-bootstrap.sh
     permissions: '0700'
     content: |
       #!/usr/bin/env bash
-      # Order matters: Tailscale SSH comes up before anything else, so a failure
-      # in a later phase leaves a debuggable box instead of a brick (ADR-002).
+      # Order matters: Tailscale SSH comes up FIRST, so a failure in any later
+      # phase leaves a debuggable box instead of a brick (ADR-002). Nothing is
+      # exposed in the meantime — the deny-all firewall is attached at server
+      # create, before this script ever runs.
       set -euo pipefail
 
       STATUS=/var/log/ghost-deploy/status
       mkdir -p "$(dirname "$STATUS")"
-      phase() { printf '%s phase=%s\n' "$(date -Is)" "$1" >> "$STATUS"; }
+      CURRENT=start
+      phase() { CURRENT=$1; printf '%s phase=%s\n' "$(date -Is)" "$1" >> "$STATUS"; }
       fail()  { printf '%s phase=%s FAILED\n' "$(date -Is)" "$1" >> "$STATUS"; exit 1; }
-
-      phase hardening
-      # The root password exists only for the out-of-band Hetzner VNC console,
-      # which goes through getty, not sshd. SSH password auth and root SSH login
-      # stay disabled, so the password is useless to a remote attacker.
-      printf 'root:__ROOT_PASSWORD__\n' | chpasswd
-      sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
-      sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
-      systemctl restart ssh 2>/dev/null || systemctl restart sshd
+      # Any failure not routed through `fail` still leaves a marker, so the
+      # status file never ends in a bare phase with no explanation.
+      trap 'printf "%s phase=%s UNEXPECTED-FAILURE line=%s\n" "$(date -Is)" "$CURRENT" "$LINENO" >> "$STATUS"' ERR
 
       phase tailscale-install
-      curl -fsSL https://tailscale.com/install.sh | sh || fail tailscale-install
+      curl -fsSL --connect-timeout 10 --max-time 120 https://tailscale.com/install.sh | sh || fail tailscale-install
 
       phase tailscale-up
       tailscale up \
@@ -58,15 +66,37 @@ write_files:
         --advertise-tags=__TS_TAG__ \
         --ssh || fail tailscale-up
 
+      # From here on the box is reachable with `ssh root@<fqdn>`.
+
+      phase hardening
+      # Non-fatal by design: the drop-in written by cloud-init already denies
+      # password and root SSH login, and the firewall denies every inbound port.
+      # Losing an sshd reload must not abort the run before Ghost is installed.
+      systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || \
+        printf '%s note=sshd-reload-skipped\n' "$(date -Is)" >> "$STATUS"
+
       phase resolve-url
       # Ghost needs its url at boot, but the Funnel FQDN does not exist until the
       # node registers. Read it from the node itself rather than guessing.
-      FQDN=$(tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//')
-      [ -n "$FQDN" ] || fail resolve-url
+      # `// empty` matters: without it jq prints the string "null", which is
+      # non-empty and would sail past the check below as https://null.
+      FQDN=$(tailscale status --json | jq -r '.Self.DNSName // empty' | sed 's/\.$//')
+      case "$FQDN" in
+        *.ts.net) ;;
+        *) fail resolve-url ;;
+      esac
       printf 'GHOST_URL=https://%s\n' "$FQDN" > /opt/ghost/.env
 
       phase docker-install
-      curl -fsSL https://get.docker.com | sh || fail docker-install
+      curl -fsSL --connect-timeout 10 --max-time 300 https://get.docker.com | sh || fail docker-install
+
+      phase docker-ready
+      # get.docker.com starts the daemon, but not necessarily before the next line.
+      for i in $(seq 1 30); do
+        docker info >/dev/null 2>&1 && break
+        [ "$i" -eq 30 ] && fail docker-ready
+        sleep 2
+      done
 
       phase ghost-up
       docker compose --env-file /opt/ghost/.env -f /opt/ghost/compose.yml up -d || fail ghost-up
@@ -83,6 +113,14 @@ write_files:
       phase funnel
       # Funnel listens publicly on 443 and proxies to Ghost on 2368.
       tailscale funnel --bg 2368 || fail funnel
+
+      phase cleanup
+      # The auth key is spent, but there is no reason to leave it on disk. The
+      # copy in /var/lib/cloud/ is removed too: Hetzner serves user-data to
+      # anything in the instance network namespace, including the Ghost
+      # container, so a container escape should not find credentials here.
+      shred -u /usr/local/bin/ghost-bootstrap.sh 2>/dev/null || rm -f /usr/local/bin/ghost-bootstrap.sh
+      shred -u /var/lib/cloud/instance/user-data.txt 2>/dev/null || rm -f /var/lib/cloud/instance/user-data.txt
 
       phase done
 
