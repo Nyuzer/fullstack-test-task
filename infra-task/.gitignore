@@ -1,0 +1,2 @@
+# rendered cloud-init holds the auth key and the break-glass root password
+.run/
