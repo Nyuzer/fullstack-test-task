@@ -97,6 +97,41 @@ check_tailnet_policy() {
   log "tailnet prerequisites OK (tagOwners, funnel attr, ssh rule)"
 }
 
+# Server types and locations change over time — cx22 was valid once and is not
+# any more — and `hcloud server create` reports a bare "Server Type not found"
+# with exit 1, after the firewall has already been created. Validate here, where
+# failing is free, and list the real options.
+check_server_type() {
+  local locs
+
+  hcloud location describe "$SERVER_LOCATION" >/dev/null 2>&1 || {
+    warn "available locations: $(hcloud location list -o noheader -o columns=name | tr '\n' ' ')"
+    die "$EXIT_PREREQ" "SERVER_LOCATION '${SERVER_LOCATION}' does not exist"
+  }
+
+  if ! hcloud server-type describe "$SERVER_TYPE" >/dev/null 2>&1; then
+    printf '\nSERVER_TYPE "%s" does not exist. Shared x86 types offered in %s:\n\n' \
+      "$SERVER_TYPE" "$SERVER_LOCATION" >&2
+    # .locations is availability; .prices lists everywhere a type is merely
+    # priced, which is not the same question.
+    hcloud server-type list -o json |
+      jq -r --arg loc "$SERVER_LOCATION" '
+        .[] | select(.architecture == "x86" and .cpu_type == "shared")
+            | select(.deprecated != true)
+            | select([.locations[]?.name] | index($loc))
+            | "  \(.name)  \(.cores) cores  \(.memory) GB RAM"' >&2
+    printf '\nSet SERVER_TYPE in infra-task/.env to one of these.\n\n' >&2
+    die "$EXIT_PREREQ" "SERVER_TYPE '${SERVER_TYPE}' not found"
+  fi
+
+  locs=$(hcloud server-type list -o json |
+    jq -r --arg t "$SERVER_TYPE" '.[] | select(.name == $t) | .locations[]?.name')
+  printf '%s\n' "$locs" | grep -qx "$SERVER_LOCATION" ||
+    die "$EXIT_PREREQ" "SERVER_TYPE '${SERVER_TYPE}' is not offered in '${SERVER_LOCATION}'; it is available in: $(printf '%s' "$locs" | tr '\n' ' ')"
+
+  log "server type ${SERVER_TYPE} is available in ${SERVER_LOCATION}"
+}
+
 # Both namespaces must be free before anything is created. A leftover tailnet
 # device named ${GHOST_HOSTNAME} is the dangerous one: MagicDNS would name the
 # new node ghost-1, while the deploy script would resolve and probe the old
@@ -124,6 +159,7 @@ run_preflight() {
   check_hcloud_token
   check_magicdns
   check_tailnet_policy
+  check_server_type
   check_hostname_free
   warn_https_certs_unverifiable
   log "note: administering the server needs your own machine in the tailnet; the public blog does not"

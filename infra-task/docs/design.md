@@ -85,6 +85,7 @@ Each wait is bounded and exits with a distinct code plus a remediation message.
 |------|---------|----------|
 | 2 | Missing local tool or env var, or bad argument | message names the tool/var |
 | 3 | Tailnet or credential prerequisite unmet | message names the console page and the policy snippet |
+| 3 | Server type/location invalid, or the name is already taken | message lists the valid options |
 | 4 | Node never registered in the tailnet | box is unreachable; `./console.sh` to read cloud-init logs, or destroy and redeploy |
 | 5 | Funnel URL never returned 200 | node is reachable; script prints the boot phases read over Tailscale SSH |
 

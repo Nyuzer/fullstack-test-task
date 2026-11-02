@@ -65,6 +65,10 @@ install `jq` with `winget install --id jqlang.jq -e`.
 You also need a Hetzner Cloud API token (Read & Write) and a Tailscale API access
 token with policy-file read and auth-key create.
 
+The default server type is `cx23` (2 vCPU, 4 GB, EU locations). Hetzner retires
+type names over time, so preflight checks the type exists and is offered in your
+chosen location, and lists the real options if not.
+
 ## Deploy
 
 ```bash
@@ -98,6 +102,7 @@ works. Readers of the blog need neither — that is what Funnel is for.
 | 2 | Missing tool, missing env var, or bad argument | the message names what is missing |
 | 3 | Credential or tailnet prerequisite unmet | paste the printed policy snippet, re-run |
 | 3 | The name is already taken by a Hetzner server or a tailnet device | `./destroy.sh`, or set `GHOST_HOSTNAME` to something else |
+| 3 | `SERVER_TYPE`/`SERVER_LOCATION` invalid or incompatible | the message lists the types actually offered there |
 | 4 | Server created but never joined the tailnet | `./console.sh`, then `hcloud server reset-password ghost` to log in; or `./destroy.sh && ./deploy.sh` |
 | 5 | Node joined but the public URL never served 200 | the printed boot phases name the failed phase; the box is still reachable over Tailscale SSH |
 

@@ -30,17 +30,25 @@ fi
 
 log "phase 2/4: provision"
 mkdir -p "$HERE/.run"
+
+# Anything created below outlives a failed run, so the trap has to know how far
+# we got: a leftover firewall is free but untidy, a leftover server bills.
+STAGE=none
+trap 'ec=$?; if [ "$ec" -ne 0 ]; then
+        case "$STAGE" in
+          server)   printf "\n  A billable server named %s now exists.\n  Run ./destroy.sh to remove it.\n\n" "$GHOST_HOSTNAME" >&2 ;;
+          firewall) printf "\n  A firewall named %s was left behind (free, but ./destroy.sh tidies it up).\n\n" "$FIREWALL_NAME" >&2 ;;
+        esac
+      fi; exit "$ec"' EXIT INT TERM
+
 TS_AUTHKEY=$(ts_mint_authkey)
 hz_firewall_ensure "$FIREWALL_NAME"
+STAGE=firewall
 render_cloud_init "$HERE/cloud-init/ghost.yaml.tmpl" "$HERE/.run/cloud-init.yaml"
 hz_server_create "$GHOST_HOSTNAME" "$SERVER_TYPE" "$SERVER_IMAGE" \
-  "$SERVER_LOCATION" "$FIREWALL_NAME" "$HERE/.run/cloud-init.yaml"
-
-# From here on a billable server exists. Any non-zero exit — including Ctrl-C
-# during the multi-minute waits below — must say so, or it is silently orphaned.
-trap 'ec=$?; if [ "$ec" -ne 0 ]; then
-        printf "\n  A billable server named %s now exists.\n  Run ./destroy.sh to remove it.\n\n" "$GHOST_HOSTNAME" >&2
-      fi; exit "$ec"' EXIT INT TERM
+  "$SERVER_LOCATION" "$FIREWALL_NAME" "$HERE/.run/cloud-init.yaml" ||
+  die "$EXIT_PREREQ" "server creation failed; the hcloud error above says why"
+STAGE=server
 
 log "phase 3/4: waiting for the tailnet node"
 FQDN=$(wait_for_node "$GHOST_HOSTNAME" 300 5)

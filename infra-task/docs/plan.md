@@ -28,7 +28,7 @@
   cd infra-task && bash -c '. lib/common.sh; load_env .env.example; echo "type=$SERVER_TYPE tag=$TS_TAG fw=$FIREWALL_NAME"'
   bash -c '. lib/common.sh; unset HCLOUD_TOKEN; require_env HCLOUD_TOKEN'; echo "exit=$?"
   ```
-  Expect `type=cx22 tag=tag:ghost fw=ghost-deny-inbound`, then an error naming `HCLOUD_TOKEN` and `exit=2`.
+  Expect `type=cx23 tag=tag:ghost fw=ghost-deny-inbound`, then an error naming `HCLOUD_TOKEN` and `exit=2`.
 - [ ] **Step 7: Verify** no secrets in the template: `grep -nE '=(tskey|[A-Za-z0-9]{20,})' .env.example || echo clean`
 - [ ] **Step 8: Commit** `feat(infra): add shared bash helpers and env template`
 
@@ -55,7 +55,7 @@
 **Files:** create `infra-task/lib/preflight.sh`
 
 - [ ] **Step 1:** Write the pure predicates `policy_has_tag_owner`, `policy_has_funnel_attr`, `policy_has_ssh_rule` (jq over the policy JSON, return 0/1, print nothing).
-- [ ] **Step 2:** Write `check_local_tools`, `check_config`, `check_hcloud_token`, `check_magicdns`, `check_hostname_free` (no existing Hetzner server *and* no existing tailnet device with that hostname).
+- [ ] **Step 2:** Write `check_local_tools`, `check_config`, `check_hcloud_token`, `check_magicdns`, `check_server_type` (type and location exist, and the type is offered there), `check_hostname_free` (no existing Hetzner server *and* no existing tailnet device with that hostname).
 - [ ] **Step 3:** Write `check_tailnet_policy` — on each failure print the literal JSON snippet to paste plus `console.tailscale.com/admin/acls`, then exit 3. Never writes the policy.
 - [ ] **Step 4:** Write `warn_https_certs_unverifiable` (HTTPS cert status is not exposed by the API, so it is a logged reminder, not a gate) and `run_preflight`.
 - [ ] **Step 5: Verify** the predicates reject a member-only policy, which is the realistic failure since `autogroup:member` does not cover tagged devices:

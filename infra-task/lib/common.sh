@@ -37,7 +37,7 @@ load_env() {
   set +a
 
   : "${GHOST_HOSTNAME:=ghost}"
-  : "${SERVER_TYPE:=cx22}"
+  : "${SERVER_TYPE:=cx23}"
   : "${SERVER_IMAGE:=ubuntu-24.04}"
   : "${SERVER_LOCATION:=nbg1}"
   : "${TS_TAG:=tag:ghost}"
