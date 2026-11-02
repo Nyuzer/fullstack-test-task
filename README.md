@@ -35,6 +35,41 @@ records are under [`dev-task/docs/adr/`](dev-task/docs/adr/).
 
 ## Task 2 — Infrastructure
 
-Not started. [`infra-task/`](infra-task/) is a placeholder; the one-click Ghost
-deployment to a Hetzner VPS with no public SSH is still to be built. The
-assignment text for it is in [`ASSIGNMENT.md`](ASSIGNMENT.md).
+Setup, the one-time tailnet prerequisites and the runbook are in
+[`infra-task/README.md`](infra-task/README.md). What was verified against a live
+deploy, and what was not, is in
+[`infra-task/docs/outcome.md`](infra-task/docs/outcome.md).
+
+`./deploy.sh` provisions a Hetzner VPS running Ghost, published over HTTPS
+through Tailscale Funnel, with **no inbound firewall rules at all** — the server
+dials out to join the tailnet and is never reachable from the internet directly.
+Plain bash and the `hcloud` CLI rather than Terraform, so the deliverable stays
+one command. The script runs four phases: a preflight that validates credentials,
+tailnet policy and server type and refuses to spend money if anything is missing;
+provisioning that mints a tagged auth key, creates a zero-rule firewall and
+attaches it *at* server create so port 22 is never briefly exposed; a bounded
+wait for the node to register; and a probe of the public URL. On the box,
+cloud-init deliberately brings Tailscale SSH up **first**, before Docker or Ghost
+exist, so any later failure leaves a debuggable machine rather than a brick, and
+each phase writes a marker that the deploy script reads back over Tailscale SSH
+when something fails. Ghost runs in Docker on SQLite, bound to loopback only.
+Administration is Tailscale SSH; the break-glass path is the Hetzner VNC console,
+and no root password is baked into user-data because Hetzner serves user-data to
+anything in the instance network namespace, including the Ghost container.
+
+A full run succeeds end to end: one command, no interaction, no SSH key anywhere
+in the flow, ending at a live blog. Boot to a healthy Ghost measured 79 seconds.
+Verified on live infrastructure: the firewall has zero rules and is attached
+before first boot, the public hostname resolves to Tailscale edge addresses
+rather than to the VPS, Ghost boots on SQLite in production mode, and preflight
+refused to proceed twice — on a missing `tagOwners` entry and on a server type
+Hetzner has retired.
+
+**Not every scenario was tested.** The HTTP 200 in the final phase was measured
+from a machine inside the tailnet, so it proves the certificate and the proxy but
+not that a client *without* Tailscale can reach the blog; port 22 on the public
+IP was never probed, resting instead on the verified zero-rule firewall;
+`destroy.sh` never ran against a live server. The full list is in
+[`outcome.md`](infra-task/docs/outcome.md#what-was-not-tested). Six decision
+records, including one on what a pre-deployment review changed, are under
+[`infra-task/docs/adr/`](infra-task/docs/adr/).
